@@ -1,0 +1,25 @@
+name: Validate Idea Files
+
+on:
+  push:
+    paths:
+      - 'ideas/*.md'
+  pull_request:
+    paths:
+      - 'ideas/*.md'
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Check required sections in idea files
+        run: python scripts/validate_ideas.py
+        # Exits 1 if any file is missing Status:, ## Valuation, ## Decision, or ⭐
+        # See scripts/validate_ideas.py for the full check list.

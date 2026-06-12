@@ -1,0 +1,22 @@
+# ── Generated / derived artifacts — never hand-edit, never commit ────────────
+# Source of truth: portfolio/transactions.csv + portfolio/instruments.csv
+portfolio/holdings_generated.csv
+docs/portfolio_data.json
+docs/portfolio_data.js
+
+# portfolio/nav_log.csv is intentionally NOT listed here — it should be
+# committed. Each update_charts.py run appends a row recording the actual
+# portfolio NAV; this file is the only way to build a historical NAV series.
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Test artifacts
+.pytest_cache/
+.coverage
+
+# Personal idea archive — not part of the public template
+ideas/archive/

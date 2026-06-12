@@ -1,0 +1,4 @@
+# DEPRECATED — benchmark data is now auto-fetched by update_charts.py
+# (IWDA.AS for MSCI World, CSPX.AS for S&P 500 via yfinance)
+# This file is no longer read by any script. Kept for reference only.
+date,msci_world,sp500,msci_europe,portfolio_value_eur

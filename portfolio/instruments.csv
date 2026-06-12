@@ -1,0 +1,5 @@
+ticker,name,isin,asset_class,yf_symbol,currency,notes
+CSPX,iShares Core S&P 500 UCITS ETF (Acc),IE00B5BMR087,Global Equities,CSPX.AS,EUR,EUR-listed; accumulating; Euronext Amsterdam
+IMEA,iShares Core MSCI Europe UCITS ETF (Acc),IE00B4K48X80,European Equities,IMAE.AS,EUR,EUR-listed; accumulating; Euronext Amsterdam
+MSFT,Microsoft Corp,US5949181045,Quality Compounders,MSFT,USD,NASDAQ; USD-priced
+EXAMPLE-CLOSED,Example Closed Position,XX0000000000,Global Equities,—,EUR,closed; notes: closed 2024-01-01 — illustrates how closed positions stay in this file for history

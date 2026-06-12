@@ -1,0 +1,842 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Investment Dashboard</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script src="portfolio_data.js"></script>
+  <style>
+    :root, [data-theme="dark"] {
+      --bg: #0f1117;
+      --surface: #1a1d27;
+      --surface2: #22263a;
+      --border: #2e3354;
+      --accent: #6c8fff;
+      --accent2: #5ecfa8;
+      --accent3: #f5a623;
+      --accent4: #e05b5b;
+      --text: #e8eaf6;
+      --muted: #7880a4;
+      --green: #4caf82;
+      --red: #e05b5b;
+      --font: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    [data-theme="light"] {
+      --bg: #f0f2f7;
+      --surface: #ffffff;
+      --surface2: #e8ecf4;
+      --border: #d0d6e8;
+      --accent: #3a6aef;
+      --accent2: #1aaa7a;
+      --accent3: #c47d00;
+      --accent4: #c93333;
+      --text: #1a1d2e;
+      --muted: #5a6280;
+      --green: #1aaa7a;
+      --red: #c93333;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: var(--bg); color: var(--text); font-family: var(--font); font-size: 14px; line-height: 1.5; }
+
+    header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 18px 32px; border-bottom: 1px solid var(--border);
+      background: var(--surface);
+    }
+    header h1 { font-size: 18px; font-weight: 600; letter-spacing: -0.3px; }
+    header .meta { color: var(--muted); font-size: 12px; }
+    .refresh-btn, .theme-btn {
+      background: var(--surface2); border: 1px solid var(--border); color: var(--text);
+      padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px;
+      transition: background 0.15s;
+    }
+    .refresh-btn:hover, .theme-btn:hover { background: var(--border); }
+    .header-actions { display: flex; gap: 8px; align-items: center; }
+
+    main { max-width: 1200px; margin: 0 auto; padding: 28px 24px; }
+
+    /* KPI cards */
+    .kpi-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 28px; }
+    .kpi {
+      background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+      padding: 18px 20px;
+    }
+    .kpi .label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.8px; color: var(--muted); margin-bottom: 6px; }
+    .kpi .value { font-size: 26px; font-weight: 700; }
+    .kpi .sub { font-size: 12px; color: var(--muted); margin-top: 3px; }
+    .kpi .value.green { color: var(--green); }
+    .kpi .value.red   { color: var(--red); }
+
+    /* Grid layouts */
+    .row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 24px; }
+    .row-full { margin-bottom: 24px; }
+    @media (max-width: 760px) { .row-2 { grid-template-columns: 1fr; } }
+
+    /* Panels */
+    .panel {
+      background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+      padding: 20px 22px;
+    }
+    .panel h2 { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.6px; color: var(--muted); margin-bottom: 16px; }
+
+    /* Chart containers */
+    .chart-wrap { position: relative; height: 260px; }
+    .chart-wrap-tall { position: relative; height: 300px; }
+
+    /* Holdings table */
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); color: var(--muted); font-weight: 500; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
+    td { padding: 10px 10px; border-bottom: 1px solid var(--border); }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: var(--surface2); }
+    .pill { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 500; }
+    .pill-tr  { background: #1e3a5f; color: #6ca8e8; }
+    .pill-deg { background: #1a3d2f; color: #5ecfa8; }
+    .num { text-align: right; font-variant-numeric: tabular-nums; }
+    .pnl-pos { color: var(--green); }
+    .pnl-neg { color: var(--red); }
+
+    /* Target vs actual bars */
+    .alloc-row { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+    .alloc-label { width: 160px; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .alloc-bar-wrap { flex: 1; height: 8px; background: var(--surface2); border-radius: 4px; position: relative; }
+    .alloc-bar-target { position: absolute; top: 0; height: 8px; border-radius: 4px; background: var(--border); }
+    .alloc-bar-actual { position: absolute; top: 0; height: 8px; border-radius: 4px; background: var(--accent); transition: width 0.5s ease; }
+    .alloc-pct { width: 48px; text-align: right; font-size: 12px; color: var(--muted); }
+
+    /* Empty state */
+    .empty { color: var(--muted); font-size: 13px; padding: 20px 0; text-align: center; }
+
+    /* Idea tracker */
+    .idea-row { display: flex; align-items: flex-start; padding: 12px 0; border-bottom: 1px solid var(--border); gap: 12px; }
+    .idea-row:last-child { border-bottom: none; }
+    .idea-row:hover { background: var(--surface2); margin: 0 -22px; padding: 12px 22px; border-radius: 6px; }
+    .idea-ticker { font-weight: 700; font-size: 13px; width: 56px; flex-shrink: 0; color: var(--accent); }
+    .idea-name { font-size: 13px; }
+    .idea-thesis { font-size: 12px; color: var(--muted); margin-top: 2px; }
+    .idea-buyzone { display: inline-block; font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 8px; margin-left: 6px; background: #1a3028; color: var(--accent2); vertical-align: middle; }
+    .idea-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+    .idea-actions a { color: var(--muted); text-decoration: none; font-size: 13px; padding: 4px 6px; border-radius: 4px; display: inline-flex; align-items: center; gap: 4px; line-height: 1; }
+    .idea-actions a:hover { background: var(--surface); color: var(--fg); }
+    .idea-actions .stars-link { color: var(--accent3); }
+    .idea-actions .google-link { font-weight: 700; }
+    .status-badge { font-size: 11px; padding: 2px 8px; border-radius: 12px; font-weight: 500; }
+    .status-Researching { background: #2a2a1a; color: var(--accent3); }
+    .status-Watching    { background: #1a2a3a; color: var(--accent); }
+    .status-Owned       { background: #1a3028; color: var(--accent2); }
+    .status-Passed      { background: #2a1a1a; color: var(--red); }
+    .stars { color: var(--accent3); font-size: 11px; }
+
+    /* Idea tabs */
+    .idea-tabs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 16px; border-bottom: 1px solid var(--border); padding-bottom: 8px; }
+    .idea-tab { background: transparent; border: 1px solid var(--border); color: var(--muted); font-size: 12px; padding: 6px 12px; border-radius: 16px; cursor: pointer; font-family: inherit; transition: all 0.15s; white-space: nowrap; }
+    .idea-tab:hover { background: var(--surface2); color: var(--fg); }
+    .idea-tab.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+    .idea-tab .tab-count { opacity: 0.7; font-size: 11px; margin-left: 4px; }
+    .priority-pill { font-size: 10px; padding: 1px 6px; border-radius: 8px; margin-left: 6px; font-weight: 600; vertical-align: middle; }
+    .pri-buy   { background: #1a3028; color: var(--accent2); }
+    .pri-watch { background: #1a2a3a; color: var(--accent); }
+    .pri-wait  { background: #2a2a1a; color: var(--accent3); }
+    .pri-pass  { background: #2a1a1a; color: var(--red); }
+    .pri-own   { background: #2a2a3a; color: var(--muted); }
+  </style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>📈 Investment Dashboard</h1>
+    <div class="meta" id="last-updated">Run update_charts.py to populate live data</div>
+  </div>
+  <div class="header-actions">
+    <button class="theme-btn" id="theme-btn" onclick="toggleTheme()">☀ Light</button>
+    <button class="refresh-btn" onclick="location.reload()">↻ Refresh</button>
+  </div>
+</header>
+
+<main>
+
+  <!-- KPI Row -->
+  <div class="kpi-row">
+    <div class="kpi">
+      <div class="label">Portfolio Value</div>
+      <div class="value" id="kpi-total">—</div>
+      <div class="sub">Active positions (EUR)</div>
+    </div>
+    <div class="kpi">
+      <div class="label">Total Return (est.)</div>
+      <div class="value" id="kpi-total-return">—</div>
+      <div class="sub" id="kpi-total-return-sub">unrealised + realised + dividends</div>
+    </div>
+    <div class="kpi">
+      <div class="label">Dividend Income</div>
+      <div class="value" id="kpi-div">—</div>
+      <div class="sub" id="kpi-div-sub">gross; net ~85% after WHT</div>
+    </div>
+    <div class="kpi">
+      <div class="label">Unrealised P&L</div>
+      <div class="value" id="kpi-pnl">—</div>
+      <div class="sub" id="kpi-pnl-pct">current positions</div>
+    </div>
+    <div class="kpi">
+      <div class="label">Positions</div>
+      <div class="value" id="kpi-positions">—</div>
+      <div class="sub" id="kpi-positions-sub">Active positions</div>
+    </div>
+  </div>
+
+  <!-- Charts row -->
+  <div class="row-2">
+    <div class="panel">
+      <h2>Allocation by Asset Class</h2>
+      <div class="chart-wrap"><canvas id="allocPie"></canvas></div>
+    </div>
+    <div class="panel">
+      <h2>Allocation by Broker</h2>
+      <div class="chart-wrap"><canvas id="brokerPie"></canvas></div>
+    </div>
+  </div>
+
+  <!-- Portfolio History -->
+  <div class="panel row-full">
+    <h2>Portfolio Value &amp; Total Return — Monthly</h2>
+    <div style="position:relative;height:300px"><canvas id="historyChart"></canvas></div>
+  </div>
+
+  <!-- Benchmark comparison -->
+  <div class="panel row-full">
+    <h2>Indexed Performance vs Benchmarks <span style="font-size:10px;color:var(--muted);font-weight:400;text-transform:none;letter-spacing:0">(time-weighted return, flows excluded · 100 = inception · EUR · MSCI World = IWDA · S&amp;P 500 = CSPX)</span></h2>
+    <div style="position:relative;height:260px"><canvas id="benchmarkChart"></canvas></div>
+  </div>
+
+  <!-- Target vs Actual -->
+  <div class="panel row-full">
+    <h2>Target vs Actual Allocation</h2>
+    <div id="target-bars"></div>
+  </div>
+
+  <!-- Holdings table -->
+  <div class="panel row-full">
+    <h2>Holdings</h2>
+    <div id="holdings-wrap">
+      <p class="empty">Run <code>python scripts/update_charts.py</code> to load your positions.</p>
+    </div>
+  </div>
+
+  <!-- Dividend breakdown -->
+  <div class="panel row-full">
+    <h2>Dividend Income by Stock <span style="font-size:10px;color:var(--muted);font-weight:400;text-transform:none;letter-spacing:0">(gross estimates — verify vs broker statements)</span></h2>
+    <div id="div-breakdown"><p class="empty">Run update_charts.py to load data.</p></div>
+  </div>
+
+  <!-- Ideas tracker -->
+  <div class="panel row-full">
+    <h2>Ideas on Radar <span style="font-size:10px;color:var(--muted);font-weight:400;text-transform:none;letter-spacing:0">(tabs by sleeve · sorted best-buy → worst)</span></h2>
+    <div id="ideas-tabs" class="idea-tabs"></div>
+    <div id="ideas-list"><p class="empty">Run update_charts.py to load ideas.</p></div>
+  </div>
+
+</main>
+
+<script>
+// ── Theme ─────────────────────────────────────────────────────────────────────
+const cssVar = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+
+function applyTheme(theme) {
+  document.documentElement.setAttribute("data-theme", theme);
+  const btn = document.getElementById("theme-btn");
+  if (btn) btn.textContent = theme === "light" ? "🌙 Dark" : "☀ Light";
+}
+
+function toggleTheme() {
+  const current = document.documentElement.getAttribute("data-theme") || "dark";
+  const next = current === "dark" ? "light" : "dark";
+  localStorage.setItem("theme", next);
+  applyTheme(next);
+  loadData();
+}
+
+// Apply saved theme before first render
+applyTheme(localStorage.getItem("theme") || "dark");
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+const round2 = (n) => Math.round(n * 100) / 100;
+
+// ── Chart instance registry (destroy before recreate) ─────────────────────────
+const chartRefs = {};
+function makeChart(id, config) {
+  if (chartRefs[id]) { chartRefs[id].destroy(); delete chartRefs[id]; }
+  chartRefs[id] = new Chart(document.getElementById(id).getContext("2d"), config);
+}
+
+// ── Colour palette ────────────────────────────────────────────────────────────
+const COLORS = ["#6c8fff","#5ecfa8","#f5a623","#e05b5b","#b97ef5","#5ac8fa","#ff9f40","#4bc0c0"];
+
+// ── Target allocation (edit to match asset-allocation.md) ─────────────────────
+// Keys must match the asset_class values in portfolio/instruments.csv.
+const TARGETS = {
+  "Global Equities":          55,
+  "European Equities":        15,
+  "Quality Compounders":      15,
+  "Asymmetric / Home-runs":    5,
+  "Emerging / Thematic":       5,
+  "Cash / Bonds":              5,
+};
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+const fmt = (n) => n == null || isNaN(n) ? "—" : "€" + Number(n).toLocaleString("de-DE", {minimumFractionDigits:2, maximumFractionDigits:2});
+const fmtPct = (n) => n == null || isNaN(n) ? "—" : (n >= 0 ? "+" : "") + Number(n).toFixed(1) + "%";
+
+function makePie(canvasId, labels, values) {
+  makeChart(canvasId, {
+    type: "doughnut",
+    data: {
+      labels,
+      datasets: [{
+        data: values,
+        backgroundColor: COLORS.slice(0, labels.length),
+        borderColor: cssVar("--bg"),
+        borderWidth: 2,
+        hoverBorderWidth: 3,
+      }]
+    },
+    options: {
+      cutout: "62%",
+      plugins: {
+        legend: {
+          position: "bottom",
+          labels: { color: cssVar("--muted"), font: { size: 12 }, padding: 14, boxWidth: 12 }
+        },
+        tooltip: {
+          callbacks: {
+            label: (ctx) => ` ${ctx.label}: €${Number(ctx.raw).toLocaleString("de-DE", {maximumFractionDigits:0})} (${(ctx.raw / ctx.chart.data.datasets[0].data.reduce((a,b)=>a+b,0)*100).toFixed(1)}%)`
+          }
+        }
+      },
+      animation: { animateRotate: true, duration: 600 }
+    }
+  });
+}
+
+// ── Portfolio history line chart ───────────────────────────────────────────────
+function renderHistory(history) {
+  if (!history || !history.length) return;
+  const labels   = history.map(p => p.date.slice(0, 7));
+  const values   = history.map(p => p.portfolio_value);
+  const invested = history.map(p => p.net_invested);
+  const returns  = history.map(p => p.total_return);
+  const gridColor   = cssVar("--border");
+  const mutedColor  = cssVar("--muted");
+  const textColor   = cssVar("--text");
+
+  makeChart("historyChart", {
+    type: "line",
+    data: {
+      labels,
+      datasets: [
+        {
+          label: "Portfolio Value",
+          data: values,
+          borderColor: "#6c8fff",
+          backgroundColor: "rgba(108,143,255,0.08)",
+          borderWidth: 2,
+          pointRadius: 2,
+          pointHoverRadius: 5,
+          fill: false,
+          tension: 0.3,
+        },
+        {
+          label: "Net Invested",
+          data: invested,
+          borderColor: mutedColor,
+          backgroundColor: "transparent",
+          borderWidth: 1.5,
+          borderDash: [5, 4],
+          pointRadius: 0,
+          pointHoverRadius: 4,
+          fill: false,
+          tension: 0.3,
+        },
+        {
+          label: "Total Return",
+          data: returns,
+          borderColor: "#5ecfa8",
+          backgroundColor: "rgba(94,207,168,0.08)",
+          borderWidth: 2,
+          pointRadius: 2,
+          pointHoverRadius: 5,
+          fill: false,
+          tension: 0.3,
+        },
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: "index", intersect: false },
+      plugins: {
+        legend: {
+          position: "bottom",
+          labels: { color: mutedColor, font: { size: 12 }, padding: 16, boxWidth: 12 }
+        },
+        tooltip: {
+          callbacks: {
+            label: (ctx) => ` ${ctx.dataset.label}: €${Number(ctx.raw).toLocaleString("de-DE", {minimumFractionDigits:0, maximumFractionDigits:0})}`
+          }
+        }
+      },
+      scales: {
+        x: {
+          ticks: { color: mutedColor, font: { size: 11 }, maxTicksLimit: 12 },
+          grid:  { color: gridColor }
+        },
+        y: {
+          ticks: {
+            color: mutedColor, font: { size: 11 },
+            callback: (v) => "€" + Number(v).toLocaleString("de-DE", {maximumFractionDigits:0})
+          },
+          grid: { color: gridColor }
+        }
+      }
+    }
+  });
+}
+
+// ── Benchmark comparison chart (time-weighted return, indexed to 100) ─────────
+// Portfolio line uses twr_index (computed in reconcile.py): deposits/withdrawals
+// are stripped out, so it's comparable to the price-indexed benchmarks.
+function renderBenchmarks(history) {
+  const valid = (history || []).filter(p => p.twr_index > 0);
+  if (valid.length < 2) return;
+
+  // Find the first month where portfolio + at least one benchmark are both present
+  const idx0 = valid.findIndex(p =>
+    p.twr_index > 0 && (p.benchmark_msci_world || p.benchmark_sp500)
+  );
+  if (idx0 < 0) return;
+
+  const base_port  = valid[idx0].twr_index;
+  const base_world = valid[idx0].benchmark_msci_world;
+  const base_sp500 = valid[idx0].benchmark_sp500;
+
+  const slice       = valid.slice(idx0);
+  const labels      = slice.map(p => p.date.slice(0, 7));
+  const portIdx     = slice.map(p => p.twr_index > 0 ? round2(p.twr_index / base_port * 100) : null);
+  const worldIdx    = slice.map(p => p.benchmark_msci_world && base_world ? round2(p.benchmark_msci_world / base_world * 100) : null);
+  const sp500Idx    = slice.map(p => p.benchmark_sp500  && base_sp500  ? round2(p.benchmark_sp500  / base_sp500  * 100) : null);
+
+  const gridColor  = cssVar("--border");
+  const mutedColor = cssVar("--muted");
+
+  makeChart("benchmarkChart", {
+    type: "line",
+    data: {
+      labels,
+      datasets: [
+        {
+          label: "Portfolio",
+          data: portIdx,
+          borderColor: "#6c8fff",
+          backgroundColor: "rgba(108,143,255,0.06)",
+          borderWidth: 2.5,
+          pointRadius: 2,
+          pointHoverRadius: 5,
+          fill: false,
+          tension: 0.3,
+        },
+        {
+          label: "MSCI World (IWDA)",
+          data: worldIdx,
+          borderColor: "#5ecfa8",
+          backgroundColor: "transparent",
+          borderWidth: 1.5,
+          borderDash: [5, 4],
+          pointRadius: 0,
+          pointHoverRadius: 4,
+          fill: false,
+          tension: 0.3,
+        },
+        {
+          label: "S&P 500 (CSPX)",
+          data: sp500Idx,
+          borderColor: "#f5a623",
+          backgroundColor: "transparent",
+          borderWidth: 1.5,
+          borderDash: [5, 4],
+          pointRadius: 0,
+          pointHoverRadius: 4,
+          fill: false,
+          tension: 0.3,
+        },
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: "index", intersect: false },
+      plugins: {
+        legend: {
+          position: "bottom",
+          labels: { color: mutedColor, font: { size: 12 }, padding: 16, boxWidth: 12 }
+        },
+        tooltip: {
+          callbacks: {
+            label: (ctx) => {
+              if (ctx.raw == null) return null;
+              const delta = (ctx.raw - 100).toFixed(1);
+              const sign  = delta >= 0 ? "+" : "";
+              return ` ${ctx.dataset.label}: ${Number(ctx.raw).toFixed(1)} (${sign}${delta}%)`;
+            }
+          }
+        }
+      },
+      scales: {
+        x: {
+          ticks: { color: mutedColor, font: { size: 11 }, maxTicksLimit: 12 },
+          grid:  { color: gridColor }
+        },
+        y: {
+          ticks: {
+            color: mutedColor, font: { size: 11 },
+            callback: (v) => v.toFixed(0)
+          },
+          grid: { color: gridColor }
+        }
+      }
+    }
+  });
+}
+
+function renderTargetBars(byClass, total) {
+  const wrap = document.getElementById("target-bars");
+  if (!total) {
+    wrap.innerHTML = '<p class="empty">No data — run update_charts.py</p>';
+    return;
+  }
+  const actuals = {};
+  for (const [cls, val] of Object.entries(byClass)) {
+    actuals[cls] = (val / total * 100);
+  }
+  let html = "";
+  for (const [cls, target] of Object.entries(TARGETS)) {
+    const actual = actuals[cls] || 0;
+    const drift  = actual - target;
+    const driftStr = drift === 0 ? "" : ` <span style="color:${drift > 5 || drift < -5 ? '#e05b5b' : '#f5a623'}">(${drift > 0 ? "+" : ""}${drift.toFixed(1)}%)</span>`;
+    html += `
+      <div class="alloc-row">
+        <div class="alloc-label">${cls}</div>
+        <div class="alloc-bar-wrap">
+          <div class="alloc-bar-target" style="width:${target}%"></div>
+          <div class="alloc-bar-actual" style="width:${Math.min(actual, 100)}%"></div>
+        </div>
+        <div class="alloc-pct">${actual.toFixed(1)}% / ${target}%${driftStr}</div>
+      </div>`;
+  }
+  wrap.innerHTML = html;
+}
+
+function renderHoldings(holdings) {
+  if (!holdings || !holdings.length) return;
+  const wrap = document.getElementById("holdings-wrap");
+  let rows = "";
+  for (const h of holdings) {
+    const pnl     = parseFloat(h.unrealised_pnl_eur) || 0;
+    const pnlPct  = parseFloat(h.pnl_pct) || 0;
+    const broker  = (h.broker || "").toLowerCase().includes("republic") ? "Trade Republic" : h.broker;
+    const pillCls = broker === "Trade Republic" ? "pill-tr" : "pill-deg";
+    rows += `
+      <tr>
+        <td><strong>${h.ticker}</strong></td>
+        <td>${h.name || ""}</td>
+        <td>${h.asset_class || ""}</td>
+        <td><span class="pill ${pillCls}">${broker}</span></td>
+        <td class="num">${h.shares}</td>
+        <td class="num">${fmt(h.avg_cost_eur)}</td>
+        <td class="num">${fmt(h.current_price_eur)}</td>
+        <td class="num"><strong>${fmt(h.market_value_eur)}</strong></td>
+        <td class="num">${(h.weight_pct || 0).toFixed(1)}%</td>
+        <td class="num ${pnl >= 0 ? "pnl-pos" : "pnl-neg"}">${fmt(pnl)} <small>(${fmtPct(pnlPct)})</small></td>
+      </tr>`;
+  }
+  wrap.innerHTML = `
+    <table>
+      <thead>
+        <tr>
+          <th>Ticker</th><th>Name</th><th>Class</th><th>Broker</th>
+          <th class="num">Shares</th><th class="num">Avg Cost</th>
+          <th class="num">Price</th><th class="num">Value</th>
+          <th class="num">Weight</th><th class="num">P&L</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+}
+
+// ── Dividend breakdown panel ──────────────────────────────────────────────────
+function renderDividendBreakdown(divByTicker, totalDiv) {
+  const wrap = document.getElementById("div-breakdown");
+  if (!divByTicker || !Object.keys(divByTicker).length) {
+    wrap.innerHTML = '<p class="empty">No dividend data — run update_charts.py</p>';
+    return;
+  }
+  const sorted = Object.entries(divByTicker).sort((a,b) => b[1]-a[1]);
+  const max = sorted[0][1];
+  let html = '<div style="display:grid;gap:8px;margin-top:4px;">';
+  for (const [ticker, amt] of sorted) {
+    const pct = (amt / max * 100).toFixed(1);
+    const portPct = totalDiv ? (amt / totalDiv * 100).toFixed(1) : 0;
+    html += `
+      <div style="display:flex;align-items:center;gap:10px;">
+        <div style="width:52px;font-weight:700;font-size:12px;color:var(--accent)">${ticker}</div>
+        <div style="flex:1;height:10px;background:var(--surface2);border-radius:5px;overflow:hidden;">
+          <div style="width:${pct}%;height:100%;background:var(--accent2);border-radius:5px;transition:width 0.5s"></div>
+        </div>
+        <div style="width:80px;text-align:right;font-size:12px;font-variant-numeric:tabular-nums">${fmt(amt)}</div>
+        <div style="width:38px;text-align:right;font-size:11px;color:var(--muted)">${portPct}%</div>
+      </div>`;
+  }
+  html += `<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);display:flex;justify-content:space-between;font-size:12px;">
+    <span style="color:var(--muted)">Total gross</span>
+    <span style="font-weight:700">${fmt(totalDiv)}</span>
+  </div>`;
+  html += '</div>';
+  wrap.innerHTML = html;
+}
+
+// ── Ideas on Radar ────────────────────────────────────────────────────────────
+
+// Ticker → sleeve bucket. Update when adding ideas to ideas/watchlist.md.
+// Unmapped tickers fall into the "Other" tab.
+const IDEA_BUCKETS = {
+  // Quality Compounders (single-name 4-6% positions)
+  MSFT:  "Quality Compounders",
+  // Core ETFs
+  CSPX:  "Global Equities",
+  IMEA:  "European Equities",
+};
+
+// Status keyword → priority score (lower = higher on list within tab).
+// Also drives priority pill colour.
+function priorityScore(status) {
+  const s = (status || "").toLowerCase();
+  if (s.includes("buy zone") || s.includes("buy now") || /\bbuy\b/.test(s)) return { rank: 1, label: "BUY", cls: "pri-buy" };
+  if (s.includes("watch"))                                                    return { rank: 3, label: "WATCH", cls: "pri-watch" };
+  if (s.includes("wait"))                                                     return { rank: 4, label: "WAIT", cls: "pri-wait" };
+  if (s.includes("owned"))                                                    return { rank: 5, label: "OWNED", cls: "pri-own" };
+  if (s.includes("pass"))                                                     return { rank: 6, label: "PASS", cls: "pri-pass" };
+  if (s.includes("researching"))                                              return { rank: 2, label: "RESEARCH", cls: "pri-watch" };
+  return { rank: 7, label: status || "—", cls: "pri-wait" };
+}
+
+function ideaBucket(i) {
+  return IDEA_BUCKETS[i.ticker] || "Other";
+}
+
+// Stable tab order (matches strategy sleeves; "All" first).
+const TAB_ORDER = [
+  "All",
+  "Global Equities",
+  "European Equities",
+  "Quality Compounders",
+  "Asymmetric / Home-runs",
+  "Emerging / Thematic",
+  "Passed",
+  "Other",
+];
+
+// Persist active tab across reloads
+function getActiveTab()      { return localStorage.getItem("ideas-active-tab") || "All"; }
+function setActiveTab(name)  { localStorage.setItem("ideas-active-tab", name); }
+
+let _ideasCache = [];
+
+function renderIdeas(ideas) {
+  _ideasCache = ideas || [];
+  const tabsWrap = document.getElementById("ideas-tabs");
+  const listWrap = document.getElementById("ideas-list");
+  if (!ideas || !ideas.length) {
+    tabsWrap.innerHTML = "";
+    listWrap.innerHTML = '<p class="empty">No ideas yet — add entries to ideas/watchlist.md</p>';
+    return;
+  }
+  // Count per bucket
+  const counts = { "All": ideas.length };
+  for (const i of ideas) {
+    const b = ideaBucket(i);
+    counts[b] = (counts[b] || 0) + 1;
+  }
+  const buckets = TAB_ORDER.filter(b => b === "All" || counts[b]);
+  const active = buckets.includes(getActiveTab()) ? getActiveTab() : "All";
+
+  // Render tabs
+  tabsWrap.innerHTML = buckets.map(b => `
+    <button class="idea-tab ${b === active ? 'active' : ''}" data-bucket="${b}">
+      ${b}<span class="tab-count">${counts[b] || 0}</span>
+    </button>
+  `).join("");
+  // Wire tab clicks
+  tabsWrap.querySelectorAll(".idea-tab").forEach(btn => {
+    btn.onclick = () => {
+      setActiveTab(btn.dataset.bucket);
+      renderIdeas(_ideasCache);
+    };
+  });
+
+  renderIdeaList(active);
+}
+
+function renderIdeaList(activeBucket) {
+  const listWrap = document.getElementById("ideas-list");
+  const stars = (n) => "⭐".repeat(Math.max(0, Math.min(5, n)));
+
+  // Filter + decorate + sort
+  let rows = _ideasCache
+    .filter(i => activeBucket === "All" || ideaBucket(i) === activeBucket)
+    .map(i => ({ i, p: priorityScore(i.status), b: ideaBucket(i) }));
+
+  // Sort: priority asc → conviction desc → ticker asc
+  rows.sort((a, b) => (a.p.rank - b.p.rank) || ((b.i.conviction || 0) - (a.i.conviction || 0)) || a.i.ticker.localeCompare(b.i.ticker));
+
+  if (!rows.length) {
+    listWrap.innerHTML = '<p class="empty">No ideas in this sleeve.</p>';
+    return;
+  }
+
+  listWrap.innerHTML = rows.map(({ i, p, b }) => {
+    const statusClean = (i.status || "").replace(/\*\*/g, "").trim();
+    const bucketChip = activeBucket === "All"
+      ? `<span style="font-size:10px;color:var(--muted);background:var(--surface2);padding:1px 6px;border-radius:8px;margin-left:6px">${b}</span>`
+      : "";
+    const buyZone = extractBuyZone(i.thesis);
+    const buyZoneChip = buyZone ? `<span class="idea-buyzone" title="Entry threshold from notes">${escapeHtml(buyZone)}</span>` : "";
+
+    const issueLink = i.issue_url
+      ? `<a href="${i.issue_url}" target="_blank" rel="noopener" class="stars-link" title="Open GitHub issue">${stars(i.conviction)} ↗</a>`
+      : `<span class="stars-link" style="padding:4px 6px">${stars(i.conviction)}</span>`;
+
+    const gUrl = googleAiUrl(i.name);
+    const googleLink = `<a href="${gUrl}" target="_blank" rel="noopener" class="google-link" title="See stock and latest on Google">G ↗</a>`;
+
+    return `
+    <div class="idea-row">
+      <div class="idea-ticker">${i.ticker}</div>
+      <div style="flex:1">
+        <div class="idea-name">
+          ${i.name}
+          <span class="priority-pill ${p.cls}">${p.label}</span>
+          ${buyZoneChip}
+          <span style="font-size:11px;color:var(--muted);margin-left:6px">${statusClean}</span>
+          ${bucketChip}
+        </div>
+        <div class="idea-thesis">${i.thesis}</div>
+      </div>
+      <div class="idea-actions">
+        ${issueLink}
+        ${googleLink}
+      </div>
+    </div>`;
+  }).join("");
+}
+
+// Extract entry/buy-zone threshold from free-text notes.
+// Token pattern: optional currency word (CAD/USD/EUR), then a price like "€1,250" / "$420" / "₩580k".
+// Priority: explicit "entry <X" wins over generic "base FV X".
+const PRICE_TOKEN = "(?:[A-Z]{2,4}\\s+)?[€$£¥₩]?[\\d][\\d.,]*\\s?[a-zA-Z]?";
+function extractBuyZone(text) {
+  if (!text) return null;
+  const entry = text.match(new RegExp("entry\\s*<\\s*(" + PRICE_TOKEN + ")", "i"));
+  if (entry) return "entry <" + entry[1].trim();
+  const buyZone = text.match(new RegExp("buy\\s*zone[:\\s]+(" + PRICE_TOKEN + ")", "i"));
+  if (buyZone) return "buy <" + buyZone[1].trim();
+  const fv = text.match(new RegExp("base\\s*FV\\s+(" + PRICE_TOKEN + ")", "i"));
+  if (fv) return "FV " + fv[1].trim();
+  return null;
+}
+
+function googleAiUrl(name) {
+  const q = `${name} stock today price and latest info from past week`;
+  return `https://www.google.com/search?udm=50&q=${encodeURIComponent(q)}`;
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+// ── Load data.json (written by update_charts.py) ──────────────────────────────
+async function loadData() {
+  try {
+    let d;
+    if (window.PORTFOLIO_DATA) {
+      d = window.PORTFOLIO_DATA;
+    } else {
+      const res = await fetch("portfolio_data.json?t=" + Date.now());
+      if (!res.ok) throw new Error("no data");
+      d = await res.json();
+    }
+
+    // KPIs
+    document.getElementById("last-updated").textContent = "Updated: " + new Date(d.updated_at).toLocaleString("en-GB");
+    document.getElementById("kpi-total").textContent = fmt(d.total_value_eur);
+    document.getElementById("kpi-positions").textContent = (d.holdings || []).length;
+    const brokers = [...new Set((d.holdings || []).map(h => h.broker))].join(" · ");
+    if (brokers) document.getElementById("kpi-positions-sub").textContent = brokers;
+
+    const totalPnl = (d.holdings || []).reduce((s,h) => s + (parseFloat(h.unrealised_pnl_eur)||0), 0);
+    const pnlEl    = document.getElementById("kpi-pnl");
+    pnlEl.textContent = fmt(totalPnl);
+    pnlEl.className = "value " + (totalPnl >= 0 ? "green" : "red");
+
+    // Dividend KPI
+    const totalDiv = parseFloat(d.dividend_income_eur) || 0;
+    const netDiv   = parseFloat(d.dividend_income_net_eur) || 0;
+    const divEl    = document.getElementById("kpi-div");
+    divEl.textContent = fmt(totalDiv);
+    divEl.className = "value green";
+    document.getElementById("kpi-div-sub").textContent = `net ~${fmt(netDiv)} after WHT`;
+
+    // Total return KPI
+    const totalRet = parseFloat(d.total_return_eur) || 0;
+    const retEl    = document.getElementById("kpi-total-return");
+    retEl.textContent = fmt(totalRet);
+    retEl.className = "value " + (totalRet >= 0 ? "green" : "red");
+    const realised = parseFloat(d.realised_pnl_eur) || 0;
+    document.getElementById("kpi-total-return-sub").textContent =
+      `unrealised ${fmt(totalPnl)} · realised ${fmt(realised)} · div ${fmt(netDiv)}`;
+
+    // Pie charts
+    const classesByValue = d.allocation_by_class || {};
+    const brokerByValue  = d.allocation_by_broker || {};
+    makePie("allocPie",  Object.keys(classesByValue),  Object.values(classesByValue));
+    makePie("brokerPie", Object.keys(brokerByValue),   Object.values(brokerByValue));
+
+    // Target bars
+    renderTargetBars(classesByValue, d.total_value_eur);
+
+    // Holdings table
+    renderHoldings(d.holdings);
+
+    // History chart
+    renderHistory(d.history);
+
+    // Benchmark comparison chart
+    renderBenchmarks(d.history);
+
+    // Dividend breakdown
+    renderDividendBreakdown(d.dividend_by_ticker, totalDiv);
+
+    // Ideas
+    renderIdeas(d.ideas);
+
+  } catch (e) {
+    // No data file yet — show placeholder charts
+    makePie("allocPie",  ["Global Equities","European Equities","Real Estate","Thematic","Cash"], [50,20,10,10,10]);
+    makePie("brokerPie", ["Trade Republic","DEGIRO"], [60, 40]);
+    renderTargetBars({}, 0);
+  }
+}
+
+loadData();
+</script>
+</body>
+</html>
