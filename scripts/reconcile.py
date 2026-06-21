@@ -10,6 +10,7 @@ without corrupting the accounting layer.
 """
 
 import csv
+import os
 from pathlib import Path
 from typing import Dict
 
@@ -21,6 +22,40 @@ INSTRUMENTS_CSV  = ROOT / "portfolio" / "instruments.csv"
 WHT_NET_FACTOR = 0.85
 # Share-count tolerance for fractional ETF savings plans
 EPS = 1e-6
+
+# ── Base currency configuration ─────────────────────────────────────────────
+# Every ledger amount (the price/total/fee columns, cost basis, market value,
+# all dashboard figures) is denominated in this currency. Instruments quoted in
+# any OTHER currency are converted into it via yfinance FX (see
+# update_charts.fetch_fx). Override with the BASE_CURRENCY env var, e.g.
+#   BASE_CURRENCY=USD python scripts/update_charts.py
+# Default EUR — change the env var, not this line.
+BASE_CURRENCY = (os.environ.get("BASE_CURRENCY") or "EUR").strip().upper()
+
+# Symbol + number locale used to format figures on the CLI and dashboard.
+# Auto-resolved from BASE_CURRENCY; override with CURRENCY_SYMBOL / NUMBER_LOCALE.
+_CURRENCY_SYMBOLS = {
+    "EUR": "€",  "USD": "$",  "GBP": "£",  "JPY": "¥",   "CHF": "CHF ",
+    "CAD": "C$", "AUD": "A$", "NZD": "NZ$", "SGD": "S$", "HKD": "HK$",
+    "SEK": "kr ", "NOK": "kr ", "DKK": "kr ", "PLN": "zł ", "CZK": "Kč ",
+    "INR": "₹",  "BRL": "R$", "ZAR": "R",  "KRW": "₩",  "CNY": "¥",
+}
+CURRENCY_SYMBOL = (os.environ.get("CURRENCY_SYMBOL")
+                   or _CURRENCY_SYMBOLS.get(BASE_CURRENCY, BASE_CURRENCY + " "))
+# de-DE preserves the original EUR formatting (1.234,56); everything else
+# defaults to en-US (1,234.56). Override with NUMBER_LOCALE.
+NUMBER_LOCALE = (os.environ.get("NUMBER_LOCALE")
+                 or ("de-DE" if BASE_CURRENCY == "EUR" else "en-US"))
+
+
+def txn_amount(row, name):
+    """Read a ledger money column by its canonical name, falling back to the
+    legacy ``<name>_eur`` header so pre-rename CSVs (and forks) keep loading.
+    ``name`` is one of ``price`` / ``total`` / ``fee``. Returns a float."""
+    val = row.get(name)
+    if val in (None, ""):
+        val = row.get(f"{name}_eur")
+    return float(val or 0)
 
 
 def load_instruments(path=INSTRUMENTS_CSV) -> Dict[str, dict]:
@@ -35,7 +70,7 @@ def load_instruments(path=INSTRUMENTS_CSV) -> Dict[str, dict]:
                 "isin":        row.get("isin", "").strip(),
                 "asset_class": row.get("asset_class", "Other").strip() or "Other",
                 "yf_symbol":   row.get("yf_symbol", "").strip() or t,
-                "currency":    (row.get("currency", "EUR").strip() or "EUR").upper(),
+                "currency":    (row.get("currency", "").strip() or BASE_CURRENCY).upper(),
             }
     return inst
 
@@ -53,7 +88,7 @@ def derive_holdings(transactions, instruments):
     """
     Average-cost method, tracked per (ticker, broker).
 
-      BUY  : cost basis += total_eur; shares += shares
+      BUY  : cost basis += total; shares += shares
       SELL : shares and cost basis reduced at the running average cost
 
     Returns (holdings, warnings, errors).
@@ -71,7 +106,7 @@ def derive_holdings(transactions, instruments):
         ticker = r["ticker"].strip()
         broker = r.get("broker", "").strip() or "Unknown"
         shares = float(r.get("shares") or 0)
-        total  = float(r.get("total_eur") or 0)
+        total  = txn_amount(r, "total")
         key = (ticker, broker)
         if key not in book:
             book[key] = {"shares": 0.0, "cost": 0.0}
@@ -102,21 +137,21 @@ def derive_holdings(transactions, instruments):
         if meta is None:
             warnings.append(f"{ticker}: no row in instruments.csv — using defaults")
             meta = {"name": ticker, "isin": "", "asset_class": "Other",
-                    "yf_symbol": ticker, "currency": "EUR"}
+                    "yf_symbol": ticker, "currency": BASE_CURRENCY}
         shares   = round(h["shares"], 6)
         cost     = round(h["cost"], 2)
         avg_cost = round(cost / shares, 4) if shares else 0.0
         holdings.append({
-            "ticker":         ticker,
-            "name":           meta["name"],
-            "isin":           meta["isin"],
-            "asset_class":    meta["asset_class"],
-            "broker":         broker,
-            "shares":         shares,
-            "avg_cost_eur":   avg_cost,
-            "cost_basis_eur": cost,
-            "currency":       meta["currency"],
-            "yf_symbol":      meta["yf_symbol"],
+            "ticker":      ticker,
+            "name":        meta["name"],
+            "isin":        meta["isin"],
+            "asset_class": meta["asset_class"],
+            "broker":      broker,
+            "shares":      shares,
+            "avg_cost":    avg_cost,
+            "cost_basis":  cost,
+            "currency":    meta["currency"],
+            "yf_symbol":   meta["yf_symbol"],
         })
     return holdings, warnings, errors
 
@@ -125,17 +160,17 @@ def allocation_by(holdings, field) -> Dict[str, float]:
     out: Dict[str, float] = {}
     for h in holdings:
         k = h.get(field, "Other")
-        out[k] = round(out.get(k, 0) + h["market_value_eur"], 2)
+        out[k] = round(out.get(k, 0) + h["market_value"], 2)
     return out
 
 
 def compute_dividend_summary(transactions):
     div_rows = [r for r in transactions if r.get("action") == "DIVIDEND"]
-    total = sum(float(r["total_eur"]) for r in div_rows)
+    total = sum(txn_amount(r, "total") for r in div_rows)
     by_ticker: Dict[str, float] = {}
     for r in div_rows:
         t = r["ticker"]
-        by_ticker[t] = round(by_ticker.get(t, 0.0) + float(r["total_eur"]), 2)
+        by_ticker[t] = round(by_ticker.get(t, 0.0) + txn_amount(r, "total"), 2)
     return round(total, 2), by_ticker
 
 
@@ -203,12 +238,12 @@ def compute_realised_pnl(transactions):
     fees = 0.0
     for r in transactions:
         action = r.get("action", "")
-        fees += float(r.get("fee_eur") or 0)
+        fees += txn_amount(r, "fee")
         if action not in ("BUY", "SELL"):
             continue
         key = (r["ticker"], r.get("broker", ""))
         shares = float(r.get("shares") or 0)
-        total  = float(r.get("total_eur") or 0)
+        total  = txn_amount(r, "total")
         h = book.setdefault(key, {"shares": 0.0, "cost": 0.0})
         if action == "BUY":
             h["shares"] += shares

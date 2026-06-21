@@ -30,7 +30,7 @@ Required columns:
 | `isin` | `IE00B5BMR087` | Optional but useful for audit |
 | `asset_class` | `Global Equities` | Must match a key in `TARGETS` in `docs/index.html` |
 | `yf_symbol` | `CSPX.AS` | Yahoo Finance ticker — test with `yf.Ticker("CSPX.AS").history(period="5d")` |
-| `currency` | `EUR` | `EUR` or `USD` (USD auto-converted via EURUSD=X) |
+| `currency` | `EUR` | The currency the instrument is **quoted** in. Anything ≠ your base currency is auto-converted via yfinance FX (`<CUR><BASE>=X`). |
 | `notes` | `accumulating ETF` | Free text |
 
 For instruments not on any exchange (e.g. bank index funds), use `—` as the `yf_symbol` — they will be priced at cost basis.
@@ -59,15 +59,22 @@ Required columns:
 | `isin` | string | `IE00B5BMR087` |
 | `action` | `BUY` / `SELL` / `DIVIDEND` | `BUY` |
 | `shares` | decimal | `2.5` |
-| `price_eur` | decimal (EUR) | `412.50` |
-| `total_eur` | decimal (EUR, **includes fee**) | `827.50` |
+| `price` | decimal (base currency) | `412.50` |
+| `total` | decimal (base currency, **includes fee**) | `827.50` |
 | `broker` | string | `DEGIRO` |
-| `fee_eur` | decimal | `2.50` |
+| `fee` | decimal (base currency) | `2.50` |
 | `notes` | string | optional |
 
-Important: `total_eur` must be the **total amount debited/credited from your account**, inclusive of broker fees. This is what the reconciliation uses for average-cost accounting.
+All money columns (`price` / `total` / `fee`) are in your **base currency**
+(default EUR — see Step 4b). Legacy files using `price_eur` / `total_eur` /
+`fee_eur` headers still load unchanged.
 
-For USD-priced instruments: record `price_eur` in EUR (convert at the rate on trade date), or use the USD price and let `total_eur` be the EUR equivalent from your broker statement. Consistency matters — pick one approach and stick to it.
+Important: `total` must be the **total amount debited/credited from your account**, inclusive of broker fees. This is what the reconciliation uses for average-cost accounting.
+
+For instruments quoted in another currency: record `total` as the base-currency
+amount your broker actually moved (it already did the FX). Live valuation then
+converts the instrument's market price from its `currency` (in `instruments.csv`)
+back into your base currency automatically.
 
 ---
 
@@ -91,6 +98,23 @@ Also edit `strategy/asset-allocation.md` to document your chosen allocation and 
 
 ---
 
+## Step 4b — (Optional) Pick a base currency
+
+EUR is the default reporting currency. To report in another currency, set the
+`BASE_CURRENCY` env var (ISO code) — it drives every figure, the dashboard
+symbol/locale, and FX conversion:
+
+```bash
+BASE_CURRENCY=USD python scripts/update_charts.py
+```
+
+Make it permanent for the GitHub Action by adding it under `env:` in
+`.github/workflows/refresh-portfolio.yml`, or export it in your shell profile.
+Symbol and number formatting auto-resolve from the currency; override with
+`CURRENCY_SYMBOL` / `NUMBER_LOCALE` if you want something different.
+
+---
+
 ## Step 5 — Run the script
 
 ```bash
@@ -102,7 +126,8 @@ Expected output:
 📊 Portfolio Update — 2024-01-15
 
 Derived 3 live position(s) from 12 ledger rows.
-  FX EURUSD=1.0842
+  Base currency: EUR
+  FX USD→EUR 0.8719
 
 💼 Portfolio value:      €4,230.00
    Unrealised P&L:       €185.20
@@ -114,7 +139,7 @@ Derived 3 live position(s) from 12 ledger rows.
 If the script exits with an error:
 - **"LEDGER DOES NOT RECONCILE"** → a SELL row exceeds the shares held at that (ticker, broker) pair. Check `transactions.csv` against your broker statement.
 - **"no row in instruments.csv"** → add the missing ticker to `instruments.csv`.
-- **"Could not fetch EURUSD=X"** → network issue; retry or set `latest_eurusd` manually in `main()`.
+- **"No FX history for `<CUR><BASE>=X`"** → that currency pair didn't resolve on Yahoo; those positions fall back to cost basis. Check the instrument's `currency` code.
 
 Open `docs/index.html` in your browser to see the dashboard.
 

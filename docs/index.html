@@ -162,7 +162,7 @@
     <div class="kpi">
       <div class="label">Portfolio Value</div>
       <div class="value" id="kpi-total">—</div>
-      <div class="sub">Active positions (EUR)</div>
+      <div class="sub" id="kpi-total-sub">Active positions</div>
     </div>
     <div class="kpi">
       <div class="label">Total Return (est.)</div>
@@ -206,7 +206,7 @@
 
   <!-- Benchmark comparison -->
   <div class="panel row-full">
-    <h2>Indexed Performance vs Benchmarks <span style="font-size:10px;color:var(--muted);font-weight:400;text-transform:none;letter-spacing:0">(time-weighted return, flows excluded · 100 = inception · EUR · MSCI World = IWDA · S&amp;P 500 = CSPX)</span></h2>
+    <h2>Indexed Performance vs Benchmarks <span style="font-size:10px;color:var(--muted);font-weight:400;text-transform:none;letter-spacing:0">(time-weighted return, flows excluded · 100 = inception · <span id="bench-ccy">EUR</span> · MSCI World = IWDA · S&amp;P 500 = CSPX)</span></h2>
     <div style="position:relative;height:260px"><canvas id="benchmarkChart"></canvas></div>
   </div>
 
@@ -285,7 +285,13 @@ const TARGETS = {
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-const fmt = (n) => n == null || isNaN(n) ? "—" : "€" + Number(n).toLocaleString("de-DE", {minimumFractionDigits:2, maximumFractionDigits:2});
+// Currency symbol + number locale are set from portfolio_data.js on load
+// (base_currency / currency_symbol / number_locale). Defaults match EUR so the
+// placeholder/offline view still renders.
+let CUR_SYMBOL = "€";
+let NUM_LOCALE = "de-DE";
+const money = (n, opts) => CUR_SYMBOL + Number(n).toLocaleString(NUM_LOCALE, opts);
+const fmt = (n) => n == null || isNaN(n) ? "—" : money(n, {minimumFractionDigits:2, maximumFractionDigits:2});
 const fmtPct = (n) => n == null || isNaN(n) ? "—" : (n >= 0 ? "+" : "") + Number(n).toFixed(1) + "%";
 
 function makePie(canvasId, labels, values) {
@@ -310,7 +316,7 @@ function makePie(canvasId, labels, values) {
         },
         tooltip: {
           callbacks: {
-            label: (ctx) => ` ${ctx.label}: €${Number(ctx.raw).toLocaleString("de-DE", {maximumFractionDigits:0})} (${(ctx.raw / ctx.chart.data.datasets[0].data.reduce((a,b)=>a+b,0)*100).toFixed(1)}%)`
+            label: (ctx) => ` ${ctx.label}: ${money(ctx.raw, {maximumFractionDigits:0})} (${(ctx.raw / ctx.chart.data.datasets[0].data.reduce((a,b)=>a+b,0)*100).toFixed(1)}%)`
           }
         }
       },
@@ -382,7 +388,7 @@ function renderHistory(history) {
         },
         tooltip: {
           callbacks: {
-            label: (ctx) => ` ${ctx.dataset.label}: €${Number(ctx.raw).toLocaleString("de-DE", {minimumFractionDigits:0, maximumFractionDigits:0})}`
+            label: (ctx) => ` ${ctx.dataset.label}: ${money(ctx.raw, {minimumFractionDigits:0, maximumFractionDigits:0})}`
           }
         }
       },
@@ -394,7 +400,7 @@ function renderHistory(history) {
         y: {
           ticks: {
             color: mutedColor, font: { size: 11 },
-            callback: (v) => "€" + Number(v).toLocaleString("de-DE", {maximumFractionDigits:0})
+            callback: (v) => money(v, {maximumFractionDigits:0})
           },
           grid: { color: gridColor }
         }
@@ -541,7 +547,7 @@ function renderHoldings(holdings) {
   const wrap = document.getElementById("holdings-wrap");
   let rows = "";
   for (const h of holdings) {
-    const pnl     = parseFloat(h.unrealised_pnl_eur) || 0;
+    const pnl     = parseFloat(h.unrealised_pnl) || 0;
     const pnlPct  = parseFloat(h.pnl_pct) || 0;
     const broker  = (h.broker || "").toLowerCase().includes("republic") ? "Trade Republic" : h.broker;
     const pillCls = broker === "Trade Republic" ? "pill-tr" : "pill-deg";
@@ -552,9 +558,9 @@ function renderHoldings(holdings) {
         <td>${h.asset_class || ""}</td>
         <td><span class="pill ${pillCls}">${broker}</span></td>
         <td class="num">${h.shares}</td>
-        <td class="num">${fmt(h.avg_cost_eur)}</td>
-        <td class="num">${fmt(h.current_price_eur)}</td>
-        <td class="num"><strong>${fmt(h.market_value_eur)}</strong></td>
+        <td class="num">${fmt(h.avg_cost)}</td>
+        <td class="num">${fmt(h.current_price)}</td>
+        <td class="num"><strong>${fmt(h.market_value)}</strong></td>
         <td class="num">${(h.weight_pct || 0).toFixed(1)}%</td>
         <td class="num ${pnl >= 0 ? "pnl-pos" : "pnl-neg"}">${fmt(pnl)} <small>(${fmtPct(pnlPct)})</small></td>
       </tr>`;
@@ -775,32 +781,41 @@ async function loadData() {
       d = await res.json();
     }
 
+    // Currency formatting (drives every fmt()/money() call below)
+    if (d.currency_symbol) CUR_SYMBOL = d.currency_symbol;
+    if (d.number_locale)   NUM_LOCALE = d.number_locale;
+    const ccy = d.base_currency || "EUR";
+
     // KPIs
     document.getElementById("last-updated").textContent = "Updated: " + new Date(d.updated_at).toLocaleString("en-GB");
-    document.getElementById("kpi-total").textContent = fmt(d.total_value_eur);
+    document.getElementById("kpi-total").textContent = fmt(d.total_value);
+    const totalSub = document.getElementById("kpi-total-sub");
+    if (totalSub) totalSub.textContent = "Active positions · " + ccy;
+    const benchCcy = document.getElementById("bench-ccy");
+    if (benchCcy) benchCcy.textContent = ccy;
     document.getElementById("kpi-positions").textContent = (d.holdings || []).length;
     const brokers = [...new Set((d.holdings || []).map(h => h.broker))].join(" · ");
     if (brokers) document.getElementById("kpi-positions-sub").textContent = brokers;
 
-    const totalPnl = (d.holdings || []).reduce((s,h) => s + (parseFloat(h.unrealised_pnl_eur)||0), 0);
+    const totalPnl = (d.holdings || []).reduce((s,h) => s + (parseFloat(h.unrealised_pnl)||0), 0);
     const pnlEl    = document.getElementById("kpi-pnl");
     pnlEl.textContent = fmt(totalPnl);
     pnlEl.className = "value " + (totalPnl >= 0 ? "green" : "red");
 
     // Dividend KPI
-    const totalDiv = parseFloat(d.dividend_income_eur) || 0;
-    const netDiv   = parseFloat(d.dividend_income_net_eur) || 0;
+    const totalDiv = parseFloat(d.dividend_income) || 0;
+    const netDiv   = parseFloat(d.dividend_income_net) || 0;
     const divEl    = document.getElementById("kpi-div");
     divEl.textContent = fmt(totalDiv);
     divEl.className = "value green";
     document.getElementById("kpi-div-sub").textContent = `net ~${fmt(netDiv)} after WHT`;
 
     // Total return KPI
-    const totalRet = parseFloat(d.total_return_eur) || 0;
+    const totalRet = parseFloat(d.total_return) || 0;
     const retEl    = document.getElementById("kpi-total-return");
     retEl.textContent = fmt(totalRet);
     retEl.className = "value " + (totalRet >= 0 ? "green" : "red");
-    const realised = parseFloat(d.realised_pnl_eur) || 0;
+    const realised = parseFloat(d.realised_pnl) || 0;
     document.getElementById("kpi-total-return-sub").textContent =
       `unrealised ${fmt(totalPnl)} · realised ${fmt(realised)} · div ${fmt(netDiv)}`;
 
@@ -811,7 +826,7 @@ async function loadData() {
     makePie("brokerPie", Object.keys(brokerByValue),   Object.values(brokerByValue));
 
     // Target bars
-    renderTargetBars(classesByValue, d.total_value_eur);
+    renderTargetBars(classesByValue, d.total_value);
 
     // Holdings table
     renderHoldings(d.holdings);

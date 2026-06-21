@@ -1,4 +1,4 @@
-date,ticker,name,isin,action,shares,price_eur,total_eur,broker,fee_eur,notes
+date,ticker,name,isin,action,shares,price,total,broker,fee,notes
 2023-01-15,CSPX,iShares Core S&P 500 UCITS ETF,IE00B5BMR087,BUY,2.0,412.50,827.50,DEGIRO,2.50,first position
 2023-02-01,CSPX,iShares Core S&P 500 UCITS ETF,IE00B5BMR087,BUY,0.50,418.00,209.00,Trade Republic,0.00,monthly DCA
 2023-03-01,CSPX,iShares Core S&P 500 UCITS ETF,IE00B5BMR087,BUY,0.50,405.20,202.60,Trade Republic,0.00,monthly DCA

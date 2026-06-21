@@ -6,7 +6,13 @@ GitHub Pages), automated daily refresh (GitHub Actions), benchmark comparison,
 idea tracking with a buy-side analyst framework, and a pre-wired AI co-pilot
 prompt (CLAUDE.md).
 
-**→ [SETUP.md](SETUP.md)** — get running in 15 minutes.
+### **🔴 [Live demo dashboard →](https://ivanmilasevic.github.io/investments-tracker/)**  ·  **[Setup in 15 min →](SETUP.md)**
+
+The live demo runs on **synthetic data** — it's the actual deployed dashboard,
+safe to click around. Configurable base currency (EUR / USD / GBP / … — see
+[below](#base-currency)).
+
+[![Investment dashboard](docs/dashboard.png)](https://ivanmilasevic.github.io/investments-tracker/)
 
 ---
 
@@ -87,6 +93,33 @@ open docs/index.html   # macOS
 
 See `ideas/watchlist.md` for the full list and `ideas/_template.md` to add your own.
 One worked example: [MSFT — Microsoft](ideas/MSFT-microsoft.md).
+
+---
+
+## Base currency
+
+The reporting currency is configurable — default **EUR**. Set the `BASE_CURRENCY`
+env var (ISO code) and every figure, the dashboard symbol/locale, and FX
+conversion follow:
+
+```bash
+BASE_CURRENCY=USD python scripts/update_charts.py    # report in USD
+BASE_CURRENCY=GBP python scripts/update_charts.py    # report in GBP
+```
+
+How it works:
+- Ledger columns `price` / `total` / `fee` (in `transactions.csv`) are
+  denominated in your base currency. Record each trade's total the way it hit
+  your account.
+- Any instrument quoted in a **different** currency (its `currency` in
+  `instruments.csv`) is auto-converted via yfinance FX — the script fetches
+  whatever `<CUR><BASE>=X` pairs your holdings need, not just EUR/USD.
+- Symbol + number formatting auto-resolve from the currency (override with
+  `CURRENCY_SYMBOL` / `NUMBER_LOCALE`). The dashboard reads them from the
+  generated data — no HTML edits required.
+
+> Legacy ledgers using the old `price_eur` / `total_eur` / `fee_eur` headers
+> still load unchanged (back-compatible reader).
 
 ---
 

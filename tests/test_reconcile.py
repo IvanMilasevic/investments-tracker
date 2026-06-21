@@ -4,7 +4,7 @@ Tests for scripts/reconcile.py — pure ledger accounting, no network.
 import pytest
 from reconcile import (
     derive_holdings, compute_dividend_summary, compute_realised_pnl,
-    compute_twr_index, unadjust_splits, EPS,
+    compute_twr_index, unadjust_splits, txn_amount, EPS,
 )
 
 # ── Fixtures / helpers ────────────────────────────────────────────────────────
@@ -24,15 +24,15 @@ INSTRUMENTS = {
 def txn(date, action, ticker, shares, total, broker="DEGIRO", fee=0):
     return {
         "date": date, "action": action, "ticker": ticker,
-        "shares": str(shares), "total_eur": str(total),
-        "broker": broker, "fee_eur": str(fee),
+        "shares": str(shares), "total": str(total),
+        "broker": broker, "fee": str(fee),
     }
 
 
 def div(date, ticker, amount, broker="DEGIRO"):
     return {
         "date": date, "action": "DIVIDEND", "ticker": ticker,
-        "shares": "0", "total_eur": str(amount), "broker": broker, "fee_eur": "0",
+        "shares": "0", "total": str(amount), "broker": broker, "fee": "0",
     }
 
 
@@ -47,8 +47,8 @@ class TestDeriveHoldings:
         assert len(h) == 1
         assert h[0]["ticker"] == "CSPX"
         assert h[0]["shares"] == 10.0
-        assert h[0]["cost_basis_eur"] == 1000.0
-        assert h[0]["avg_cost_eur"] == 100.0
+        assert h[0]["cost_basis"] == 1000.0
+        assert h[0]["avg_cost"] == 100.0
 
     def test_buy_then_partial_sell(self):
         h, _, errs = derive_holdings([
@@ -57,7 +57,7 @@ class TestDeriveHoldings:
         ], INSTRUMENTS)
         assert not errs
         assert abs(h[0]["shares"] - 6.0) < EPS
-        assert abs(h[0]["cost_basis_eur"] - 600.0) < 0.01
+        assert abs(h[0]["cost_basis"] - 600.0) < 0.01
 
     def test_full_sell_closes_position(self):
         h, _, errs = derive_holdings([
@@ -118,7 +118,7 @@ class TestDeriveHoldings:
         ], INSTRUMENTS)
         assert not errs
         assert h[0]["shares"] == 3.0
-        assert abs(h[0]["avg_cost_eur"] - 950.0) < 0.01
+        assert abs(h[0]["avg_cost"] - 950.0) < 0.01
 
     def test_multiple_tickers_independent(self):
         h, _, errs = derive_holdings([
@@ -137,7 +137,7 @@ class TestDeriveHoldings:
             txn("2024-06-01", "SELL", "CSPX",  5,  600),
         ], INSTRUMENTS)
         assert not errs
-        assert abs(h[0]["cost_basis_eur"] - 500.0) < 0.01
+        assert abs(h[0]["cost_basis"] - 500.0) < 0.01
 
     def test_empty_transactions_returns_empty(self):
         h, warns, errs = derive_holdings([], INSTRUMENTS)
@@ -324,3 +324,33 @@ class TestUnadjustSplits:
             date(2021, 1, 1): 2.0, date(2022, 1, 1): 3.0,
         })
         assert abs(out[date(2020, 1, 1)] - 60.0) < 1e-9
+
+
+# ── txn_amount: canonical columns + legacy _eur back-compat ───────────────────
+
+class TestTxnAmount:
+    def test_reads_canonical_column(self):
+        assert txn_amount({"total": "827.50"}, "total") == 827.50
+
+    def test_falls_back_to_legacy_eur_column(self):
+        assert txn_amount({"total_eur": "827.50"}, "total") == 827.50
+        assert txn_amount({"fee_eur": "2.50"}, "fee") == 2.50
+
+    def test_canonical_wins_over_legacy(self):
+        assert txn_amount({"total": "10", "total_eur": "99"}, "total") == 10.0
+
+    def test_missing_and_blank_are_zero(self):
+        assert txn_amount({}, "total") == 0.0
+        assert txn_amount({"total": ""}, "total") == 0.0
+
+    def test_legacy_eur_ledger_still_reconciles(self):
+        # A pre-rename CSV row uses total_eur/fee_eur — must still derive holdings.
+        legacy = [{
+            "date": "2024-01-01", "action": "BUY", "ticker": "CSPX",
+            "shares": "10", "total_eur": "1000", "broker": "DEGIRO", "fee_eur": "1.50",
+        }]
+        h, _, errs = derive_holdings(legacy, INSTRUMENTS)
+        assert not errs
+        assert h[0]["cost_basis"] == 1000.0
+        _, fees = compute_realised_pnl(legacy)
+        assert abs(fees - 1.50) < 0.01

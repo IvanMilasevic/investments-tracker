@@ -40,12 +40,15 @@ except ImportError:
 # Import pure accounting layer (no network, fully testable)
 sys.path.insert(0, str(Path(__file__).parent))
 from reconcile import (
+    BASE_CURRENCY, CURRENCY_SYMBOL, NUMBER_LOCALE,
     EPS, WHT_NET_FACTOR,
     INSTRUMENTS_CSV, TRANSACTIONS_CSV,
     allocation_by, compute_dividend_summary, compute_realised_pnl,
     compute_twr_index, derive_holdings, load_instruments, load_transactions,
-    unadjust_splits,
+    txn_amount, unadjust_splits,
 )
+
+SYM = CURRENCY_SYMBOL  # short alias for f-string formatting
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 ROOT         = Path(__file__).parent.parent
@@ -56,10 +59,12 @@ DATA_OUT     = DOCS_DIR / "portfolio_data.json"
 DATA_OUT_JS  = DOCS_DIR / "portfolio_data.js"
 WATCHLIST_MD = ROOT / "ideas" / "watchlist.md"
 
-# EUR-denominated benchmark ETFs — no FX conversion required
+# Benchmark ETFs as (yfinance symbol, listing currency). Prices are converted
+# into the base currency just like holdings, so the indexed comparison reflects
+# what a base-currency investor actually experiences (FX drift included).
 BENCHMARK_SYMBOLS = {
-    "benchmark_msci_world": "IWDA.AS",  # iShares Core MSCI World UCITS ETF
-    "benchmark_sp500":      "CSPX.AS",  # iShares Core S&P 500 UCITS ETF
+    "benchmark_msci_world": ("IWDA.AS", "EUR"),  # iShares Core MSCI World UCITS ETF
+    "benchmark_sp500":      ("CSPX.AS", "EUR"),  # iShares Core S&P 500 UCITS ETF
 }
 
 UNLISTED_SENTINELS = {"", "—", "–", "-", "n/a", "N/A", "NA", "None"}
@@ -70,31 +75,45 @@ def is_unlisted(yf_symbol: str) -> bool:
 
 
 # ── FX ────────────────────────────────────────────────────────────────────────
-def fetch_eurusd():
-    """Return (rate_by_date, latest_rate). EURUSD=X Close = USD per 1 EUR."""
+def fetch_fx(currencies, base: str = BASE_CURRENCY):
+    """Fetch FX history for every non-base currency vs the base currency.
+
+    Returns (by_date, latest):
+      by_date[CUR] = {date: rate}   latest[CUR] = rate
+    where `rate` is units of base per 1 unit of CUR (yfinance "<CUR><BASE>=X"
+    Close). The base currency itself maps to rate 1.0. Missing currencies are
+    simply absent — callers fall back to cost basis when a rate is unavailable.
+    """
+    by_date: Dict[str, Dict] = {base: {}}
+    latest:  Dict[str, float] = {base: 1.0}
     if not HAS_DEPS:
-        return {}, None
-    try:
-        hist = yf.Ticker("EURUSD=X").history(period="max", auto_adjust=False)
-        if hist.empty:
-            return {}, None
-        close = hist["Close"].dropna()
-        by_date = {idx.date(): float(p) for idx, p in close.items()}
-        latest = float(close.iloc[-1])
         return by_date, latest
-    except Exception as e:
-        print(f"  ⚠️  Could not fetch EURUSD=X: {e}")
-        return {}, None
+    wanted = sorted({(c or base).upper() for c in currencies} - {base})
+    for cur in wanted:
+        symbol = f"{cur}{base}=X"
+        try:
+            hist = yf.Ticker(symbol).history(period="max", auto_adjust=False)
+            if hist.empty:
+                print(f"  ⚠️  No FX history for {symbol}")
+                continue
+            close = hist["Close"].dropna()
+            by_date[cur] = {idx.date(): float(p) for idx, p in close.items()}
+            latest[cur]  = float(close.iloc[-1])
+        except Exception as e:
+            print(f"  ⚠️  Could not fetch {symbol}: {e}")
+    return by_date, latest
 
 
-def to_eur(price: float, currency: str, fx_rate: Optional[float]):
-    if currency == "EUR":
-        return price
-    if currency == "USD":
-        if not fx_rate:
-            return None
-        return price / fx_rate
-    return price  # unknown currency: treat as EUR
+def to_base(amount: float, currency: str, fx_rate: Optional[float],
+            base: str = BASE_CURRENCY):
+    """Convert `amount` (in `currency`) into the base currency.
+    `fx_rate` = base per 1 unit of `currency`. Returns None when conversion is
+    required but no rate is available (caller falls back to cost basis)."""
+    if (currency or base).upper() == base:
+        return amount
+    if not fx_rate:
+        return None
+    return amount * fx_rate
 
 
 def fetch_price(yf_symbol: str) -> Optional[float]:
@@ -124,18 +143,19 @@ def fetch_price(yf_symbol: str) -> Optional[float]:
 
 
 # ── Price holdings and compute stats ──────────────────────────────────────────
-def compute_portfolio(holdings, latest_eurusd):
+def compute_portfolio(holdings, latest_fx):
     total_value = 0.0
     fallbacks = []
 
     for h in holdings:
         native = fetch_price(h["yf_symbol"])
-        price_eur = None
+        price = None
         if native is not None:
-            price_eur = to_eur(native, h["currency"], latest_eurusd)
+            cur = (h["currency"] or BASE_CURRENCY).upper()
+            price = to_base(native, cur, latest_fx.get(cur))
 
-        if price_eur is None:
-            price_eur = h["avg_cost_eur"]
+        if price is None:
+            price = h["avg_cost"]
             if is_unlisted(h["yf_symbol"]):
                 h["price_source"] = "unlisted_cost_basis"
             else:
@@ -144,20 +164,20 @@ def compute_portfolio(holdings, latest_eurusd):
         else:
             h["price_source"] = "live"
 
-        price_eur    = round(price_eur, 4)
-        market_value = round(h["shares"] * price_eur, 2)
-        cost_basis   = h["cost_basis_eur"]
+        price        = round(price, 4)
+        market_value = round(h["shares"] * price, 2)
+        cost_basis   = h["cost_basis"]
         pnl          = round(market_value - cost_basis, 2)
         pnl_pct      = round((pnl / cost_basis * 100) if cost_basis else 0, 2)
 
-        h["current_price_eur"]  = price_eur
-        h["market_value_eur"]   = market_value
-        h["unrealised_pnl_eur"] = pnl
-        h["pnl_pct"]            = pnl_pct
+        h["current_price"]  = price
+        h["market_value"]   = market_value
+        h["unrealised_pnl"] = pnl
+        h["pnl_pct"]        = pnl_pct
         total_value += market_value
 
     for h in holdings:
-        h["weight_pct"] = round(h["market_value_eur"] / total_value * 100, 2) if total_value else 0
+        h["weight_pct"] = round(h["market_value"] / total_value * 100, 2) if total_value else 0
     return holdings, round(total_value, 2), fallbacks
 
 
@@ -166,7 +186,10 @@ def compute_history(transactions, instruments, fx_by_date):
     """
     Reconstruct monthly portfolio value from the ledger + yfinance history.
     Also fetches monthly MSCI World and S&P 500 benchmark prices for comparison.
-    Each entry includes benchmark_msci_world and benchmark_sp500 (EUR prices).
+    Each entry includes benchmark_msci_world and benchmark_sp500 in base currency.
+
+    fx_by_date maps currency → {date: rate} (base per 1 unit of currency), as
+    produced by fetch_fx().
     """
     if not HAS_DEPS:
         return []
@@ -200,9 +223,11 @@ def compute_history(transactions, instruments, fx_by_date):
         except Exception:
             pass
 
-    # Benchmark history (EUR ETFs — no FX needed)
+    # Benchmark history (native listing prices — converted to base below)
     bm_cache: Dict[str, Dict] = {}
-    for key, symbol in BENCHMARK_SYMBOLS.items():
+    bm_ccy:   Dict[str, str]  = {}
+    for key, (symbol, ccy) in BENCHMARK_SYMBOLS.items():
+        bm_ccy[key] = ccy.upper()
         try:
             hist = yf.Ticker(symbol).history(period="max", auto_adjust=False)
             if not hist.empty:
@@ -218,11 +243,16 @@ def compute_history(transactions, instruments, fx_by_date):
                 return p
         return None
 
-    def fx_on(d):
-        if not fx_by_date:
+    def fx_on(currency, d):
+        """base-per-unit rate for `currency` on/just-before date `d`."""
+        cur = (currency or BASE_CURRENCY).upper()
+        if cur == BASE_CURRENCY:
+            return 1.0
+        table = fx_by_date.get(cur)
+        if not table:
             return None
         for i in range(7):
-            r = fx_by_date.get(d - timedelta(days=i))
+            r = table.get(d - timedelta(days=i))
             if r is not None:
                 return r
         return None
@@ -250,7 +280,7 @@ def compute_history(transactions, instruments, fx_by_date):
             action = r.get("action", "")
             t      = r["ticker"]
             shares = float(r.get("shares") or 0)
-            total  = float(r.get("total_eur") or 0)
+            total  = txn_amount(r, "total")
             if action == "BUY":
                 book.setdefault(t, {"shares": 0.0})["shares"] += shares
                 net_invested += total
@@ -261,8 +291,7 @@ def compute_history(transactions, instruments, fx_by_date):
             elif action == "DIVIDEND":
                 cum_div_net += total * WHT_NET_FACTOR
 
-        pv   = 0.0
-        rate = fx_on(sd)
+        pv = 0.0
         for t, h in book.items():
             if h["shares"] <= EPS:
                 continue
@@ -270,16 +299,17 @@ def compute_history(transactions, instruments, fx_by_date):
             native = lookup(cache, sd) if cache else None
             if native is None:
                 continue
-            cur = instruments.get(t, {}).get("currency", "EUR")
-            px  = to_eur(native, cur, rate)
+            cur = instruments.get(t, {}).get("currency", BASE_CURRENCY)
+            px  = to_base(native, cur, fx_on(cur, sd))
             if px is None:
                 continue
             pv += h["shares"] * px
 
-        bm_vals = {
-            key: (round(v, 4) if (v := lookup(cache, sd)) is not None else None)
-            for key, cache in bm_cache.items()
-        }
+        bm_vals = {}
+        for key, cache in bm_cache.items():
+            native = lookup(cache, sd)
+            px = to_base(native, bm_ccy[key], fx_on(bm_ccy[key], sd)) if native is not None else None
+            bm_vals[key] = round(px, 4) if px is not None else None
 
         history.append({
             "date":              str(sd),
@@ -338,9 +368,9 @@ def write_holdings_snapshot(holdings):
     if not holdings:
         return
     cols = ["ticker", "name", "isin", "asset_class", "broker", "shares",
-            "avg_cost_eur", "current_price_eur", "market_value_eur",
-            "weight_pct", "unrealised_pnl_eur", "pnl_pct", "currency",
-            "price_source", "cost_basis_eur"]
+            "avg_cost", "current_price", "market_value",
+            "weight_pct", "unrealised_pnl", "pnl_pct", "currency",
+            "price_source", "cost_basis"]
     with open(HOLDINGS_OUT, "w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=cols, extrasaction="ignore")
         w.writeheader()
@@ -349,20 +379,21 @@ def write_holdings_snapshot(holdings):
 
 
 def write_snapshot(total_value: float, net_invested: float,
-                   holdings_count: int, fx_eurusd: Optional[float]) -> None:
-    """Append a NAV row to portfolio/nav_log.csv — commit this file to track actual portfolio history."""
+                   holdings_count: int, base_currency: str) -> None:
+    """Append a NAV row to portfolio/nav_log.csv — commit this file to track actual portfolio history.
+    Amounts are in `base_currency` (recorded per row so the series is self-describing)."""
     write_header = not NAV_LOG.exists()
     with open(NAV_LOG, "a", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=["date", "total_value_eur", "net_invested_eur",
-                                           "positions", "fx_eurusd"])
+        w = csv.DictWriter(f, fieldnames=["date", "total_value", "net_invested",
+                                           "positions", "base_currency"])
         if write_header:
             w.writeheader()
         w.writerow({
-            "date":             str(date.today()),
-            "total_value_eur":  total_value,
-            "net_invested_eur": round(net_invested, 2),
-            "positions":        holdings_count,
-            "fx_eurusd":        round(fx_eurusd, 4) if fx_eurusd else "",
+            "date":          str(date.today()),
+            "total_value":   total_value,
+            "net_invested":  round(net_invested, 2),
+            "positions":     holdings_count,
+            "base_currency": base_currency,
         })
     print(f"  ✅ NAV snapshot appended → {NAV_LOG.name} (commit this file)")
 
@@ -400,14 +431,26 @@ def main():
         print(f"  ⚠️  {w}")
 
     print(f"Derived {len(holdings)} live position(s) from {len(transactions)} ledger rows.")
+    print(f"  Base currency: {BASE_CURRENCY}")
 
-    fx_by_date, latest_eurusd = fetch_eurusd()
-    if latest_eurusd:
-        print(f"  FX EURUSD={latest_eurusd:.4f}")
-    else:
-        print("  ⚠️  EURUSD unavailable — USD valuations will fall back to cost")
+    # Every currency we may need to convert into the base: instrument currencies
+    # plus benchmark listing currencies.
+    currencies = {meta.get("currency", BASE_CURRENCY) for meta in instruments.values()}
+    currencies |= {ccy for _, ccy in BENCHMARK_SYMBOLS.values()}
+    needed_ccy = sorted({(c or BASE_CURRENCY).upper() for c in currencies} - {BASE_CURRENCY})
 
-    holdings, total_value, fallbacks = compute_portfolio(holdings, latest_eurusd)
+    fx_by_date, latest_fx = fetch_fx(currencies)
+    if needed_ccy:
+        shown = ", ".join(f"{c}→{BASE_CURRENCY} {latest_fx[c]:.4f}"
+                          for c in needed_ccy if latest_fx.get(c))
+        print(f"  FX {shown}" if shown else
+              f"  ⚠️  FX unavailable for {', '.join(needed_ccy)} — those valuations fall back to cost")
+        missing = [c for c in needed_ccy if not latest_fx.get(c)]
+        if shown and missing:
+            print(f"  ⚠️  FX missing for {', '.join(missing)} — those valuations fall back to cost")
+    fx_available = all(latest_fx.get(c) for c in needed_ccy)
+
+    holdings, total_value, fallbacks = compute_portfolio(holdings, latest_fx)
 
     # ── Weight sanity check ──────────────────────────────────────────────────
     wsum = sum(h["weight_pct"] for h in holdings)
@@ -419,56 +462,59 @@ def main():
     by_broker = allocation_by(holdings, "broker")
     total_div, div_by_ticker = compute_dividend_summary(transactions)
     realised_pnl, total_fees = compute_realised_pnl(transactions)
-    unrealised   = round(sum(h["unrealised_pnl_eur"] for h in holdings), 2)
+    unrealised   = round(sum(h["unrealised_pnl"] for h in holdings), 2)
     net_div      = round(total_div * WHT_NET_FACTOR, 2)
     total_return = round(unrealised + realised_pnl + net_div, 2)
     net_invested = round(sum(
-        float(r.get("total_eur") or 0) * (1 if r.get("action") == "BUY" else -1)
+        txn_amount(r, "total") * (1 if r.get("action") == "BUY" else -1)
         for r in transactions if r.get("action") in ("BUY", "SELL")
     ), 2)
 
-    print(f"\n💼 Portfolio value:      €{total_value:,.2f}")
-    print(f"   Unrealised P&L:       €{unrealised:,.2f}")
-    print(f"   Realised P&L:         €{realised_pnl:,.2f}")
-    print(f"   Dividends (gross):    €{total_div:,.2f}  (net ~€{net_div:,.2f})")
-    print(f"   Fees paid:            €{total_fees:,.2f}")
-    print(f"   Total return (est.):  €{total_return:,.2f}")
+    print(f"\n💼 Portfolio value:      {SYM}{total_value:,.2f}")
+    print(f"   Unrealised P&L:       {SYM}{unrealised:,.2f}")
+    print(f"   Realised P&L:         {SYM}{realised_pnl:,.2f}")
+    print(f"   Dividends (gross):    {SYM}{total_div:,.2f}  (net ~{SYM}{net_div:,.2f})")
+    print(f"   Fees paid:            {SYM}{total_fees:,.2f}")
+    print(f"   Total return (est.):  {SYM}{total_return:,.2f}")
     if fallbacks:
         print(f"\n  ⚠️  Price fallback (cost used, NOT live): {', '.join(fallbacks)}")
 
     print("\nAllocation by class:")
     for c, v in by_class.items():
-        print(f"  {c:<22} €{v:>10,.2f}  ({v / total_value * 100:.1f}%)")
+        print(f"  {c:<22} {SYM}{v:>10,.2f}  ({v / total_value * 100:.1f}%)")
 
     ideas   = parse_watchlist()
     history = compute_history(transactions, instruments, fx_by_date)
 
     data = {
-        "updated_at":              datetime.now().isoformat(),
-        "total_value_eur":         total_value,
-        "unrealised_pnl_eur":      unrealised,
-        "realised_pnl_eur":        realised_pnl,
-        "dividend_income_eur":     total_div,
-        "dividend_income_net_eur": net_div,
-        "total_return_eur":        total_return,
-        "total_fees_eur":          total_fees,
-        "dividend_by_ticker":      div_by_ticker,
-        "holdings":                holdings,
-        "allocation_by_class":     by_class,
-        "allocation_by_broker":    by_broker,
-        "ideas":                   ideas,
-        "history":                 history,
+        "updated_at":          datetime.now().isoformat(),
+        "base_currency":       BASE_CURRENCY,
+        "currency_symbol":     CURRENCY_SYMBOL,
+        "number_locale":       NUMBER_LOCALE,
+        "total_value":         total_value,
+        "unrealised_pnl":      unrealised,
+        "realised_pnl":        realised_pnl,
+        "dividend_income":     total_div,
+        "dividend_income_net": net_div,
+        "total_return":        total_return,
+        "total_fees":          total_fees,
+        "dividend_by_ticker":  div_by_ticker,
+        "holdings":            holdings,
+        "allocation_by_class": by_class,
+        "allocation_by_broker": by_broker,
+        "ideas":               ideas,
+        "history":             history,
         "data_quality": {
-            "fx_eurusd_used":            latest_eurusd,
-            "fx_available":              bool(latest_eurusd),
-            "price_fallbacks":           fallbacks,
-            "reconciliation_warnings":   warnings,
-            "weights_sum_pct":           round(wsum, 2),
+            "fx_rates":                {c: round(latest_fx[c], 6) for c in needed_ccy if latest_fx.get(c)},
+            "fx_available":            fx_available,
+            "price_fallbacks":         fallbacks,
+            "reconciliation_warnings": warnings,
+            "weights_sum_pct":         round(wsum, 2),
         },
     }
 
     write_holdings_snapshot(holdings)
-    write_snapshot(total_value, net_invested, len(holdings), latest_eurusd)
+    write_snapshot(total_value, net_invested, len(holdings), BASE_CURRENCY)
     write_dashboard(data)
     print("\n✅ Done. Open docs/index.html in your browser.\n")
     return 0

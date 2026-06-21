@@ -76,7 +76,7 @@ docs/       index.html dashboard (GitHub Pages deploy)
 3. Optionally file a GitHub issue (`python scripts/sync_issues.py`) so research has a tracking thread.
 
 ### After a trade
-1. Append row(s) to `portfolio/transactions.csv` (BUY / SELL / DIVIDEND). Match broker statement exactly — shares, price_eur, total_eur, fee_eur.
+1. Append row(s) to `portfolio/transactions.csv` (BUY / SELL / DIVIDEND). Match broker statement exactly — shares, price, total, fee (all in the base currency).
 2. New instrument → add to `instruments.csv`.
 3. Run `python scripts/update_charts.py`. If it errors, the ledger is wrong — fix against the broker statement, don't suppress.
 4. If position entered/exited, log in `strategy/asset-allocation.md` rebalancing log.
@@ -86,7 +86,7 @@ Run the script → compare Current vs Target in `asset-allocation.md` → plan t
 
 ## Conventions
 
-- Currency: **EUR** is the reporting currency. USD positions are converted in the script. Always state currency when quoting prices.
+- Currency: base/reporting currency is configurable via the `BASE_CURRENCY` env var (default **EUR**); ledger columns `price`/`total`/`fee` are in it. Instruments quoted in another currency are auto-converted in the script. Always state currency when quoting prices.
 - Dates: ISO `YYYY-MM-DD`. Resolve relative dates ("last quarter", "next earnings") to absolute.
 - Conviction: ⭐ (1) to ⭐⭐⭐⭐⭐ (5). Default ⭐⭐⭐ until thesis is stress-tested.
 - File naming: `[TICKER]-[lowercase-name].md` for single names; `THEME-[topic].md` for thematic baskets.
